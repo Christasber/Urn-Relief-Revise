@@ -1,0 +1,13 @@
+{
+  "name": "Urn Relief Customizer",
+  "settings": [
+    { "type": "file", "id": "urn_rect_a", "label": "Horizontal Urn A (GLB)" },
+    { "type": "file", "id": "urn_rect_b", "label": "Vertical Urn B (GLB)" },
+    { "type": "file", "id": "urn_round", "label": "Round Urn (GLB)" },
+    { "type": "number", "id": "max_relief_mm", "label": "Max Protrusion (mm)", "default": 6 },
+    { "type": "number", "id": "default_relief_mm", "label": "Default Relief Depth (mm)", "default": 4 },
+    { "type": "text", "id": "fonts", "label": "Allowed Fonts (comma-separated)", "default": "Noto Serif, EB Garamond, Lora" }
+  ],
+  "blocks": [],
+  "presets": [{ "name": "Urn Relief Customizer" }]
+}

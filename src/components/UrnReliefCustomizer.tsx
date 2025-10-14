@@ -1,10 +1,14 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReliefReq, ReliefResp } from '@/workers/reliefWorker';
 
-export type ReliefPreview = {
-  glb: string;
-  snapshot: string;
-  ok: boolean;
-  overflowMM: number;
+type WorkerHandle = Worker | null;
+
+type UrnAssetMap = {
+  front: string;
+  back: string;
+  left: string;
+  right: string;
+  round: string;
 };
 
 type FrameState = {
@@ -19,143 +23,266 @@ type LetteringState = {
   font: string;
   sizeMM: number;
   emboss: boolean;
+  tracking?: number;
+};
+
+type ReliefState = {
+  file?: File;
+  sourceImageBase64?: string;
+  depth?: string;
+  preview?: ReliefResp;
+  isProcessing: boolean;
+  error?: string;
 };
 
 type Props = {
+  assets: Partial<UrnAssetMap>;
   maxReliefMM: number;
   defaultReliefMM: number;
-  urnUrls: Record<'front' | 'back' | 'left' | 'right' | 'round', string>;
-  fonts: string[];
+  unitsPerMM?: number;
+  onPreview?: (preview: ReliefResp | null) => void;
+  onPropertiesChange?: (properties: Record<string, string>) => void;
 };
 
-const initialFrame: FrameState = {
+const DEFAULT_FRAME: FrameState = {
   enabled: false,
   style: 'plain',
-  widthMM: 8,
+  widthMM: 4,
   thicknessMM: 2,
 };
 
-const initialLettering: LetteringState = {
+const DEFAULT_LETTERING: LetteringState = {
   text: '',
-  font: 'Noto Serif',
-  sizeMM: 12,
+  font: '',
+  sizeMM: 14,
   emboss: true,
 };
 
-export function UrnReliefCustomizer({ maxReliefMM, defaultReliefMM, urnUrls, fonts }: Props) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [preview, setPreview] = useState<ReliefPreview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedSide, setSelectedSide] = useState<'front' | 'back' | 'left' | 'right'>('front');
+export function UrnReliefCustomizer({
+  assets,
+  maxReliefMM,
+  defaultReliefMM,
+  unitsPerMM = 0.001,
+  onPreview,
+  onPropertiesChange,
+}: Props) {
+  const workerRef = useRef<WorkerHandle>(null);
+  const [relief, setRelief] = useState<ReliefState>({ isProcessing: false });
+  const [selectedSide, setSelectedSide] = useState<'front' | 'back' | 'left' | 'right' | 'round'>('front');
+  const [roundAngle, setRoundAngle] = useState(0);
   const [reliefDepth, setReliefDepth] = useState(defaultReliefMM);
-  const [frameState, setFrameState] = useState<FrameState>(initialFrame);
-  const [letteringState, setLetteringState] = useState<LetteringState>(initialLettering);
+  const [frame, setFrame] = useState<FrameState>(DEFAULT_FRAME);
+  const [lettering, setLettering] = useState<LetteringState>(DEFAULT_LETTERING);
+  const [detailLevel, setDetailLevel] = useState<'draft' | 'high'>('draft');
+  const [smoothing, setSmoothing] = useState(0.5);
 
-  const urnUrl = useMemo(() => urnUrls[selectedSide] ?? urnUrls.front, [urnUrls, selectedSide]);
+  useEffect(() => () => {
+    workerRef.current?.terminate();
+    workerRef.current = null;
+  }, []);
 
-  const handleFileChange = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const base64 = await fileToDataURL(file);
-        const depthResp = await fetch('/api/depth', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: base64 }),
-        }).then((res) => res.json());
+  useEffect(() => {
+    if (relief.preview && onPreview) onPreview(relief.preview);
+  }, [relief.preview, onPreview]);
 
-        if (depthResp.error) {
-          throw new Error(depthResp.error);
-        }
+  useEffect(() => {
+    if (!onPropertiesChange || !relief.preview) return;
+    const properties = buildLineItemProperties({
+      preview: relief.preview,
+      reliefDepthMM: reliefDepth,
+      detailLevel,
+      smoothingLevel: smoothing,
+      frame,
+      lettering,
+      side: selectedSide,
+      roundAngle,
+      depthMap: relief.depth,
+      sourceImage: relief.sourceImageBase64,
+    });
+    onPropertiesChange(properties);
+  }, [
+    relief.preview,
+    relief.depth,
+    relief.sourceImageBase64,
+    onPropertiesChange,
+    reliefDepth,
+    detailLevel,
+    smoothing,
+    frame,
+    lettering,
+    selectedSide,
+    roundAngle,
+  ]);
 
-        const worker = new Worker(new URL('../../workers/reliefWorker.ts', import.meta.url));
-        worker.postMessage({
-          depthPngBase64: depthResp.depthPngBase64,
-          maxReliefMM,
-          reliefScaleMM: reliefDepth,
-          urnGLBUrl: urnUrl,
-          urnSide: selectedSide,
-          frame: frameState,
-          lettering: letteringState,
-          unitsPerMM: 0.001,
-        });
-        worker.onmessage = (ev) => {
-          const { previewGLBBase64, snapshotPngBase64, dimensionsOK, maxOverflowMM, error: workerError } = ev.data;
-          if (workerError) {
-            setError(workerError);
-          } else {
-            setPreview({ glb: previewGLBBase64, snapshot: snapshotPngBase64, ok: dimensionsOK, overflowMM: maxOverflowMM });
-          }
-          worker.terminate();
-          setLoading(false);
-        };
-      } catch (err) {
-        setLoading(false);
-        setError(err instanceof Error ? err.message : 'Failed to create relief');
-      }
-    },
-    [frameState, letteringState, maxReliefMM, reliefDepth, selectedSide, urnUrl]
-  );
+  const onFileChange = async (file?: File) => {
+    setRelief({ isProcessing: false });
+    if (!file) return;
+    setRelief({ file, isProcessing: false });
+  };
 
-  const onReset = useCallback(() => {
-    setPreview(null);
-    setError(null);
-    setFrameState(initialFrame);
-    setLetteringState(initialLettering);
-    setReliefDepth(defaultReliefMM);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  const ensureWorker = () => {
+    if (!workerRef.current) {
+      workerRef.current = new Worker(new URL('../workers/reliefWorker.ts', import.meta.url), {
+        type: 'module',
+      });
     }
-  }, [defaultReliefMM]);
+    return workerRef.current;
+  };
+
+  const resolveUrnUrl = (): string | null => {
+    if (selectedSide === 'round') {
+      return assets.round ?? null;
+    }
+    return assets[selectedSide] ?? null;
+  };
+
+  const createRelief = async () => {
+    if (!relief.file) {
+      setRelief((prev) => ({ ...prev, error: 'Please upload an image first.' }));
+      return;
+    }
+    const urnUrl = resolveUrnUrl();
+    if (!urnUrl) {
+      setRelief((prev) => ({ ...prev, error: 'Urn model missing for selected side.' }));
+      return;
+    }
+
+    try {
+      setRelief((prev) => ({ ...prev, isProcessing: true, error: undefined }));
+      const base64 = await fileToDataUrl(relief.file);
+      const depthRes = await fetch('/api/depth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, detail: detailLevel }),
+      }).then((res) => res.json());
+
+      if (!depthRes.depthPngBase64) {
+        throw new Error(depthRes.error || 'Depth API did not return a depth map.');
+      }
+
+      const worker = ensureWorker();
+      const req: ReliefReq = {
+        depthPngBase64: depthRes.depthPngBase64,
+        maxReliefMM,
+        reliefScaleMM: reliefDepth,
+        urnGLBUrl: urnUrl,
+        urnSide: selectedSide === 'round' ? { angleDeg: roundAngle } : selectedSide,
+        frame,
+        lettering: lettering.text ? lettering : undefined,
+        unitsPerMM,
+      };
+
+      worker.onmessage = (event: MessageEvent<ReliefResp | { error: string }>) => {
+        if ('error' in event.data) {
+          setRelief({
+            file: relief.file,
+            sourceImageBase64: base64,
+            depth: depthRes.depthPngBase64,
+            isProcessing: false,
+            error: event.data.error,
+          });
+          return;
+        }
+        setRelief({
+          file: relief.file,
+          sourceImageBase64: base64,
+          depth: depthRes.depthPngBase64,
+          preview: event.data,
+          isProcessing: false,
+        });
+      };
+
+      worker.postMessage(req);
+    } catch (error) {
+      setRelief((prev) => ({
+        ...prev,
+        isProcessing: false,
+        error: error instanceof Error ? error.message : 'Failed to create relief',
+      }));
+    }
+  };
+
+  const previewMarkup = useMemo(() => {
+    if (!relief.preview) return null;
+    return (
+      <figure className="urn-relief__preview">
+        <img src={relief.preview.snapshotPngBase64} alt="Relief preview" />
+        {!relief.preview.dimensionsOK && (
+          <figcaption className="urn-relief__warning">
+            Relief exceeds max depth by {relief.preview.maxOverflowMM.toFixed(2)}mm.
+          </figcaption>
+        )}
+      </figure>
+    );
+  }, [relief.preview]);
 
   return (
-    <div className="urn-relief-customizer">
-      <h2>Urn Relief Customizer</h2>
-      <div className="controls">
-        <label>
-          Upload reference photo
-          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} />
+    <div className="urn-relief">
+      <div className="urn-relief__upload">
+        <label className="urn-relief__label">
+          Upload source photo
+          <input type="file" accept="image/*" onChange={(event) => onFileChange(event.target.files?.[0])} />
         </label>
-        <label>
-          Relief depth (mm)
+        <button type="button" onClick={createRelief} disabled={relief.isProcessing}>
+          {relief.isProcessing ? 'Processing…' : 'Generate relief'}
+        </button>
+        {relief.error && <p className="urn-relief__error">{relief.error}</p>}
+      </div>
+
+      <div className="urn-relief__controls">
+        <fieldset>
+          <legend>Relief depth (mm)</legend>
           <input
             type="range"
-            min={1}
+            min={0}
             max={maxReliefMM}
+            step={0.5}
             value={reliefDepth}
             onChange={(event) => setReliefDepth(Number(event.target.value))}
           />
-        </label>
-        <label>
-          Urn side
+          <span>{reliefDepth.toFixed(1)} mm</span>
+        </fieldset>
+
+        <fieldset>
+          <legend>Urn side</legend>
           <select value={selectedSide} onChange={(event) => setSelectedSide(event.target.value as typeof selectedSide)}>
             <option value="front">Front</option>
             <option value="back">Back</option>
             <option value="left">Left</option>
             <option value="right">Right</option>
+            <option value="round">Round</option>
           </select>
-        </label>
+          {selectedSide === 'round' && (
+            <label>
+              Angle (°)
+              <input
+                type="number"
+                min={0}
+                max={359}
+                value={roundAngle}
+                onChange={(event) => setRoundAngle(Number(event.target.value))}
+              />
+            </label>
+          )}
+        </fieldset>
+
         <fieldset>
           <legend>Frame</legend>
           <label>
             <input
               type="checkbox"
-              checked={frameState.enabled}
-              onChange={(event) => setFrameState((prev) => ({ ...prev, enabled: event.target.checked }))}
+              checked={frame.enabled}
+              onChange={(event) => setFrame((prev) => ({ ...prev, enabled: event.target.checked }))}
             />
-            Enable frame
+            Add frame
           </label>
-          {frameState.enabled && (
-            <div className="frame-options">
+          {frame.enabled && (
+            <div className="urn-relief__frame-options">
               <label>
                 Style
                 <select
-                  value={frameState.style}
-                  onChange={(event) => setFrameState((prev) => ({ ...prev, style: event.target.value as FrameState['style'] }))}
+                  value={frame.style}
+                  onChange={(event) => setFrame((prev) => ({ ...prev, style: event.target.value as FrameState['style'] }))}
                 >
                   <option value="plain">Plain</option>
                   <option value="beveled">Beveled</option>
@@ -167,9 +294,9 @@ export function UrnReliefCustomizer({ maxReliefMM, defaultReliefMM, urnUrls, fon
                 <input
                   type="number"
                   min={2}
-                  max={24}
-                  value={frameState.widthMM}
-                  onChange={(event) => setFrameState((prev) => ({ ...prev, widthMM: Number(event.target.value) }))}
+                  max={20}
+                  value={frame.widthMM}
+                  onChange={(event) => setFrame((prev) => ({ ...prev, widthMM: Number(event.target.value) }))}
                 />
               </label>
               <label>
@@ -177,77 +304,80 @@ export function UrnReliefCustomizer({ maxReliefMM, defaultReliefMM, urnUrls, fon
                 <input
                   type="number"
                   min={1}
-                  max={maxReliefMM}
-                  value={frameState.thicknessMM}
-                  onChange={(event) => setFrameState((prev) => ({ ...prev, thicknessMM: Number(event.target.value) }))}
+                  max={12}
+                  value={frame.thicknessMM}
+                  onChange={(event) => setFrame((prev) => ({ ...prev, thicknessMM: Number(event.target.value) }))}
                 />
               </label>
             </div>
           )}
         </fieldset>
+
         <fieldset>
           <legend>Lettering</legend>
           <label>
-            Message
+            Text
             <input
-              type="text"
-              value={letteringState.text}
-              onChange={(event) => setLetteringState((prev) => ({ ...prev, text: event.target.value }))}
+              value={lettering.text}
+              onChange={(event) => setLettering((prev) => ({ ...prev, text: event.target.value }))}
             />
           </label>
           <label>
-            Font
-            <select
-              value={letteringState.font}
-              onChange={(event) => setLetteringState((prev) => ({ ...prev, font: event.target.value }))}
-            >
-              {fonts.map((font) => (
-                <option key={font} value={font}>
-                  {font}
-                </option>
-              ))}
-            </select>
+            Font URL
+            <input
+              value={lettering.font}
+              onChange={(event) => setLettering((prev) => ({ ...prev, font: event.target.value }))}
+            />
           </label>
           <label>
             Size (mm)
             <input
               type="number"
               min={6}
-              max={40}
-              value={letteringState.sizeMM}
-              onChange={(event) => setLetteringState((prev) => ({ ...prev, sizeMM: Number(event.target.value) }))}
+              max={48}
+              value={lettering.sizeMM}
+              onChange={(event) => setLettering((prev) => ({ ...prev, sizeMM: Number(event.target.value) }))}
             />
           </label>
           <label>
+            Embossed?
             <input
               type="checkbox"
-              checked={letteringState.emboss}
-              onChange={(event) => setLetteringState((prev) => ({ ...prev, emboss: event.target.checked }))}
+              checked={lettering.emboss}
+              onChange={(event) => setLettering((prev) => ({ ...prev, emboss: event.target.checked }))}
             />
-            Emboss
           </label>
         </fieldset>
-        <button type="button" onClick={onReset} disabled={loading}>
-          Reset
-        </button>
+
+        <fieldset>
+          <legend>Quality</legend>
+          <label>
+            Detail level
+            <select value={detailLevel} onChange={(event) => setDetailLevel(event.target.value as typeof detailLevel)}>
+              <option value="draft">Draft (-small)</option>
+              <option value="high">High (-base)</option>
+            </select>
+          </label>
+          <label>
+            Smoothing
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.1}
+              value={smoothing}
+              onChange={(event) => setSmoothing(Number(event.target.value))}
+            />
+          </label>
+        </fieldset>
       </div>
 
-      {loading && <p className="status">Processing image…</p>}
-      {error && <p className="error">{error}</p>}
-      {preview && (
-        <div className="preview">
-          <p>{preview.ok ? 'Ready for cart' : `Overflow of ${preview.overflowMM.toFixed(2)}mm`}</p>
-          {preview.snapshot && <img src={preview.snapshot} alt="Relief preview" />}
-          <a href={preview.glb} download="urn-relief.glb">
-            Download GLB
-          </a>
-        </div>
-      )}
+      {previewMarkup}
     </div>
   );
 }
 
-async function fileToDataURL(file: File): Promise<string> {
+async function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -256,4 +386,51 @@ async function fileToDataURL(file: File): Promise<string> {
   });
 }
 
-export default UrnReliefCustomizer;
+type PropertiesInput = {
+  preview: ReliefResp;
+  reliefDepthMM: number;
+  detailLevel: 'draft' | 'high';
+  smoothingLevel: number;
+  frame: FrameState;
+  lettering: LetteringState;
+  side: 'front' | 'back' | 'left' | 'right' | 'round';
+  roundAngle: number;
+  depthMap?: string;
+  sourceImage?: string;
+};
+
+function buildLineItemProperties({
+  preview,
+  reliefDepthMM,
+  detailLevel,
+  smoothingLevel,
+  frame,
+  lettering,
+  side,
+  roundAngle,
+  depthMap,
+  sourceImage,
+}: PropertiesInput): Record<string, string> {
+  return {
+    urn_side: side,
+    urn_angle_deg: side === 'round' ? roundAngle.toString() : '0',
+    relief_depth_mm: reliefDepthMM.toFixed(2),
+    detail_level: detailLevel,
+    smoothing_level: smoothingLevel.toFixed(2),
+    frame_enabled: frame.enabled ? 'true' : 'false',
+    frame_style: frame.style,
+    frame_width_mm: frame.widthMM.toFixed(2),
+    frame_thickness_mm: frame.thicknessMM.toFixed(2),
+    lettering_text: lettering.text,
+    lettering_font: lettering.font,
+    lettering_size_mm: lettering.sizeMM.toFixed(2),
+    lettering_emboss: lettering.emboss ? 'true' : 'false',
+    source_image_url: sourceImage ?? '',
+    heightmap_url: depthMap ?? '',
+    preview_glb_url: preview.previewGLBBase64,
+    preview_png_url: preview.snapshotPngBase64,
+    dimensions_ok: preview.dimensionsOK ? 'true' : 'false',
+    max_overflow_mm: preview.maxOverflowMM.toFixed(2),
+    ai_engine: 'Depth-Anything-V2',
+  };
+}

@@ -1,56 +1,55 @@
 # Depth-Anything v2 Urn Customizer
 
-This repository contains an end-to-end reference implementation for integrating Depth-Anything-V2 depth estimation into a Shopify product customizer that generates relief meshes for urns.
+This repository provides a reference implementation for integrating Depth-Anything V2 depth estimation into a Shopify product customizer.  It contains:
 
-## Contents
+- A Next.js/Express-compatible API route that forwards images to the Hugging Face Inference API and returns a 16-bit depth PNG.
+- An optional FastAPI server for local inference when you want to host the model yourself.
+- A fully featured Three.js web worker that converts the depth map into a relief mesh, shrink-wraps it to urn geometry, and exports preview assets.
+- A React component that wires the worker into a Shopify-ready UI, feeds outputs into cart line item properties, and enforces sizing rules.
+- A Shopify section schema that exposes urn assets and default relief settings to merchants.
 
-- **/api/depth/index.ts** – Next.js compatible API route that calls the Hugging Face inference endpoint and returns a depth PNG.
-- **/server/main.py** – Optional FastAPI server for on-premises inference.
-- **/workers/reliefWorker.ts** – Three.js Web Worker that converts the depth map into a shrink-wrapped relief mesh, frame, and lettering, then exports a GLB and PNG preview.
-- **/src/components/UrnReliefCustomizer.tsx** – React component demonstrating how to capture user input, call the API, and communicate with the worker.
-- **/shopify/sections/urn-relief-customizer.schema.json** – Drop-in Shopify section schema for exposing settings in the theme editor.
+> **Note:** This code focuses on the client/server logic required for integration.  You will still need to supply actual GLB assets for the urns and provide valid font URLs for lettering.
 
-## Getting Started
+## Project layout
 
-1. Install dependencies (Next.js, Three.js, `three/examples` helpers, and optional `three-mesh-bvh`).
-2. Set the `HF_API_TOKEN` environment variable before starting the Next.js dev server.
-3. Serve the worker and component via your chosen bundler.
-4. (Optional) Run the FastAPI server for local inference.
-
-## Cart Integration
-
-The worker returns preview data and dimension checks that can be stored in Shopify line-item properties:
-
-```json
-{
-  "urn_model": "urn_rect_a",
-  "urn_side": "front",
-  "relief_depth_mm": 4,
-  "detail_level": "preview",
-  "frame_enabled": true,
-  "frame_style": "beveled",
-  "lettering_text": "In Loving Memory",
-  "heightmap_url": "https://.../depth.png",
-  "preview_glb_url": "https://.../preview.glb",
-  "preview_png_url": "https://.../preview.png",
-  "ai_engine": "Depth-Anything-V2",
-  "ai_version": "base",
-  "dimensions_ok": true,
-  "max_overflow_mm": 0.0,
-  "timestamp_iso": "2024-01-01T00:00:00.000Z"
-}
+```
+api/depth/index.ts      # Hugging Face forwarding API
+server/main.py          # Optional local FastAPI inference server
+src/workers/reliefWorker.ts   # Three.js worker that builds relief meshes
+src/components/UrnReliefCustomizer.tsx # React UI entry point
+public/schema/urn-relief-customizer.json # Shopify section schema
 ```
 
-Update the webhook or storefront code to upload source images, previews, and GLBs to Shopify Files or your own storage bucket before submitting the cart.
+### Getting started
 
-## Safety & Validation
+1. Install dependencies and TypeScript types:
+   ```bash
+   npm install
+   ```
+2. Build or type-check the project:
+   ```bash
+   npm run build
+   ```
+3. For local inference, install the Depth-Anything V2 weights and run the FastAPI server:
+   ```bash
+   pip install -r server/requirements.txt
+   uvicorn server.main:app --reload
+   ```
+4. Configure your Shopify app or hosting environment with a valid `HF_API_TOKEN` for the Hugging Face route, or update your storefront to call the local endpoint.
 
-- Relief depth is clamped via the worker.
-- Overflow detection raycasts back to the urn shell.
-- Frame and lettering sizes adapt to the relief bounds.
+### Shopify integration
 
-## Notes
+- Drop the section schema into your theme and connect the React bundle to the storefront product template.
+- When the user clicks **Add to cart**, persist the properties listed in `src/components/UrnReliefCustomizer.tsx` so that the fulfillment team receives all assets and metadata.
+- The worker enforces the max relief depth; however, we still flag any overflows in the UI for manual approval.
 
-- Replace the mock inference in `server/main.py` with the real Depth-Anything-V2 model when running locally.
-- Ensure fonts referenced by the worker are available as Three.js JSON font assets (`/fonts/*.json`).
-- Bundle the worker with tools such as Vite, Next.js (via `next.config.js` worker loader), or Webpack.
+### Local Depth-Anything V2
+
+The FastAPI server automatically falls back to CPU if CUDA is unavailable, but GPU acceleration is strongly recommended.  Review the comments in `server/main.py` to replace the placeholder inference call with the actual model forward pass.
+
+### Additional notes
+
+- The worker uses `three-mesh-bvh` for efficient collision and proximity tests.
+- Text meshes are generated via `opentype.js`; provide font URLs that permit client-side loading.
+- The preview exporter produces both a GLB (for in-cart viewers) and a PNG snapshot (for quick thumbnails).
+

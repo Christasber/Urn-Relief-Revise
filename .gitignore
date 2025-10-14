@@ -1,0 +1,11 @@
+node_modules
+.DS_Store
+.env
+
+# Python
+__pycache__
+*.pyc
+
+# Build artifacts
+out
+dist

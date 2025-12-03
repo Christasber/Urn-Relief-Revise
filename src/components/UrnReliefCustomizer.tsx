@@ -18,37 +18,9 @@ type FrameState = {
   thicknessMM: number;
 };
 
-type FontOption = {
-  id: string;
-  label: string;
-  url: string;
-};
-
-const FONT_OPTIONS: FontOption[] = [
-  {
-    id: 'eb-garamond',
-    label: 'EB Garamond',
-    url: 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/ebgaramond/EBGaramond-Regular.ttf',
-  },
-  {
-    id: 'lora',
-    label: 'Lora',
-    url: 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/lora/Lora-Regular.ttf',
-  },
-  {
-    id: 'noto-serif',
-    label: 'Noto Serif',
-    url: 'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notoserif/NotoSerif-Regular.ttf',
-  },
-];
-
-const CUSTOM_FONT_KEY = 'custom';
-
 type LetteringState = {
   text: string;
   font: string;
-  fontLabel?: string;
-  fontKey?: string;
   sizeMM: number;
   emboss: boolean;
   tracking?: number;
@@ -81,9 +53,7 @@ const DEFAULT_FRAME: FrameState = {
 
 const DEFAULT_LETTERING: LetteringState = {
   text: '',
-  font: FONT_OPTIONS[0]?.url ?? '',
-  fontLabel: FONT_OPTIONS[0]?.label,
-  fontKey: FONT_OPTIONS[0]?.id,
+  font: '',
   sizeMM: 14,
   emboss: true,
 };
@@ -174,10 +144,6 @@ export function UrnReliefCustomizer({
     const urnUrl = resolveUrnUrl();
     if (!urnUrl) {
       setRelief((prev) => ({ ...prev, error: 'Urn model missing for selected side.' }));
-      return;
-    }
-    if (lettering.text && !lettering.font) {
-      setRelief((prev) => ({ ...prev, error: 'Provide a font URL or choose a preset font before adding lettering.' }));
       return;
     }
 
@@ -357,56 +323,12 @@ export function UrnReliefCustomizer({
             />
           </label>
           <label>
-            Font
-            <select
-              value={lettering.fontKey ?? CUSTOM_FONT_KEY}
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === CUSTOM_FONT_KEY) {
-                  setLettering((prev) => ({
-                    ...prev,
-                    fontKey: CUSTOM_FONT_KEY,
-                    fontLabel: 'Custom URL',
-                    font: prev.font ?? '',
-                  }));
-                  return;
-                }
-                const option = FONT_OPTIONS.find((item) => item.id === value) ?? FONT_OPTIONS[0];
-                setLettering((prev) => ({
-                  ...prev,
-                  font: option.url,
-                  fontKey: option.id,
-                  fontLabel: option.label,
-                }));
-              }}
-            >
-              {FONT_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-              <option value={CUSTOM_FONT_KEY}>Custom URL</option>
-            </select>
+            Font URL
+            <input
+              value={lettering.font}
+              onChange={(event) => setLettering((prev) => ({ ...prev, font: event.target.value }))}
+            />
           </label>
-          {lettering.fontKey === CUSTOM_FONT_KEY && (
-            <label>
-              Custom font URL
-              <input
-                placeholder="https://example.com/font.ttf"
-                value={lettering.font}
-                onChange={(event) =>
-                  setLettering((prev) => ({
-                    ...prev,
-                    font: event.target.value,
-                  }))
-                }
-              />
-            </label>
-          )}
-          <p className="urn-relief__hint">
-            Font files are fetched directly in the browser. The preset options reference Google Fonts CDN URLs that are compatible
-            with opentype.js, or you can supply a custom HTTPS font file.
-          </p>
           <label>
             Size (mm)
             <input
@@ -501,8 +423,6 @@ function buildLineItemProperties({
     frame_thickness_mm: frame.thicknessMM.toFixed(2),
     lettering_text: lettering.text,
     lettering_font: lettering.font,
-    lettering_font_label: lettering.fontLabel ?? '',
-    lettering_font_key: lettering.fontKey ?? (lettering.font ? CUSTOM_FONT_KEY : ''),
     lettering_size_mm: lettering.sizeMM.toFixed(2),
     lettering_emboss: lettering.emboss ? 'true' : 'false',
     source_image_url: sourceImage ?? '',

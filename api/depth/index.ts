@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import fetch from 'node-fetch';
+import fetch, { Response } from 'node-fetch';
 
 const HF_MODEL = process.env.HF_MODEL_NAME || 'depth-anything/Depth-Anything-V2-base';
 const HF_URL = `https://api-inference.huggingface.co/models/${HF_MODEL}`;

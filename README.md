@@ -53,15 +53,3 @@ The FastAPI server automatically falls back to CPU if CUDA is unavailable, but G
 - Text meshes are generated via `opentype.js`; provide font URLs that permit client-side loading.
 - The preview exporter produces both a GLB (for in-cart viewers) and a PNG snapshot (for quick thumbnails).
 
-### Built-in lettering font URLs
-
-The React customizer ships with a short list of serif fonts that are loaded directly from the Google Fonts repository via jsDelivr.  You can replace or extend them inside `src/components/UrnReliefCustomizer.tsx` (`FONT_OPTIONS`).
-
-| Font        | URL                                                                 |
-|-------------|---------------------------------------------------------------------|
-| EB Garamond | `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/ebgaramond/EBGaramond-Regular.ttf` |
-| Lora        | `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/lora/Lora-Regular.ttf`              |
-| Noto Serif  | `https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notoserif/NotoSerif-Regular.ttf`    |
-
-These links are HTTPS, CORS-friendly, and compatible with `opentype.js` parsing in the worker.  If you prefer branded fonts, add their URLs to `FONT_OPTIONS` or switch the UI to accept merchant-provided inputs.
-

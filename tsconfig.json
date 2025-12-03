@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": "./",
+    "lib": ["DOM", "DOM.Iterable", "ES2020", "WebWorker"],
+    "jsx": "react-jsx",
+    "typeRoots": ["./types"],
+    "paths": {
+      "@/workers/*": ["src/workers/*"],
+      "@/components/*": ["src/components/*"],
+      "@/utils/*": ["src/utils/*"],
+      "next": ["types/next.d.ts"]
+    }
+  },
+  "include": ["src", "api", "types"]
+}
